@@ -1,0 +1,2189 @@
+---
+title: "Projet Machine Learning"
+author: "Fatima HADDAG, Cylia OUABA, Yikun WANG, Imane ALLAOUI"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+# Chargement des packages nécessaires
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(scales)
+library(RColorBrewer)
+library(skimr)
+library(tidyr)
+library(rworldmap)
+library(sf)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(corrplot)
+library(randomForest)
+library(caret)
+library(xgboost)
+library(caret)
+```
+
+# Introduction
+
+Les catastrophes naturelles constituent l'un des défis majeurs de notre
+époque, avec des impacts dévastateurs sur les populations et les
+économies mondiales. Face à ces enjeux, la capacité à prédire et à
+évaluer leurs conséquences devient cruciale, particulièrement pour le
+secteur de l'assurance qui joue un rôle central dans la gestion des
+risques.
+
+Ce projet s'appuie sur la base de données **EM-DAT** (Emergency Events
+Database), qui recense les catastrophes naturelles survenues à l'échelle
+mondiale entre 1980 et 2024. Cette base de données fournit des
+informations détaillées sur :
+
+-   Les types de catastrophes (inondations, séismes, épidémies...)
+
+-   Leur localisation géographique
+
+-   Leurs impacts humains (décès, personnes affectées)
+
+Notre étude vise à répondre à la problématique suivante :
+
+**Comment prévoir l'impact humain des catastrophes naturelles en termes
+de décès et de populations affectées, et utiliser ces prévisions pour
+proposer une solution concrète aux assureurs ?**
+
+Les objectifs spécifiques sont :
+
+1.  **Prédire l'impact des catastrophes** :
+    -   Estimer le nombre de décès
+    -   Évaluer le nombre de personnes affectées (blessés, déplacés,
+        nécessitant une assistance)
+    -   Analyser les facteurs déterminants de ces impacts
+2.  **Proposer une méthodologie pour le secteur de l'assurance** :
+    -   Développer un modèle prédictif fiable
+    -   Fournir des outils d'aide à la décision pour la tarification
+    -   Améliorer l'évaluation des risques
+
+Cette approche combinera des analyses statistiques avancées et des
+techniques de machine learning pour développer des modèles prédictifs
+robustes et applicables dans un contexte professionnel.
+
+# 1. Traitement et analyse des données
+
+## 1.1 Importation et aperçu des données
+
+```{r import_data, echo=F}
+# Importation des données
+data <- read_csv("data_cleaned_final.csv")
+
+# Aperçu de la structure des données
+glimpse(data)
+```
+
+## 1.2 Analyse des valeurs manquantes
+
+```{r missing_values, echo=F}
+# Calcul du pourcentage de valeurs manquantes par variable
+missing_analysis <- round(colMeans(is.na(data)) * 100)
+missing_table <- data.frame(
+  Variable = names(missing_analysis),
+  Missing_Percentage = round(missing_analysis, 2)
+)
+
+# Affichage du tableau des valeurs manquantes
+knitr::kable(missing_table, 
+             caption = "Pourcentage de valeurs manquantes par variable",
+             format = "markdown")
+```
+
+Cette première analyse nous permet d'observer :
+
+1.  La structure de notre jeu de données avec ses différentes variables
+
+2.  La présence et la distribution des valeurs manquantes
+
+3.  La qualité générale des données
+
+L'analyse préliminaire des valeurs manquantes révèle que certaines
+variables clés comme `total_deaths` et `total_affected` présentent
+respectivement 30% et 23% de valeurs manquantes. Ces proportions
+significatives nécessitent une étude plus approfondie des patterns de
+données manquantes selon différentes dimensions (région, type de
+catastrophe, période) pour guider notre stratégie de traitement des
+données.
+
+Procédons à une analyse plus détaillée de ces valeurs manquantes :
+
+## 1.3 Analyse détaillée des valeurs manquantes
+
+### 1.3.1 Analyse par dimension (région, type et temporelle)
+
+```{r missing_detailed, echo=FALSE}
+# Analyse par région
+missing_by_region <- data %>%
+  group_by(region) %>%
+  summarise(
+    total_count = n(),
+    missing_deaths = sum(is.na(total_deaths)),
+    missing_affected = sum(is.na(total_affected)),
+    pct_missing_deaths = round(missing_deaths/total_count * 100),
+    pct_missing_affected = round(missing_affected/total_count * 100)
+  )
+
+# Analyse par type de catastrophe
+missing_by_type <- data %>%
+  group_by(disaster_type) %>%
+  summarise(
+    total_count = n(),
+    missing_deaths = sum(is.na(total_deaths)),
+    missing_affected = sum(is.na(total_affected)),
+    pct_missing_deaths = round(missing_deaths/total_count * 100),
+    pct_missing_affected = round(missing_affected/total_count * 100)
+  )
+
+# Analyse temporelle
+missing_by_year <- data %>%
+  group_by(year) %>%
+  summarise(
+    total_count = n(),
+    missing_deaths = sum(is.na(total_deaths)),
+    missing_affected = sum(is.na(total_affected)),
+    pct_missing_deaths = round(missing_deaths/total_count * 100),
+    pct_missing_affected = round(missing_affected/total_count * 100)
+  )
+```
+
+### 1.3.2 Visualisation des patterns de valeurs manquantes
+
+```{r missing_plots, fig.width=12, fig.height=8, echo=FALSE}
+# Graphique par région
+p1 <- missing_by_region %>%
+  ggplot(aes(x = reorder(region, pct_missing_deaths))) +
+  geom_bar(aes(y = pct_missing_deaths, fill = "Deaths"), 
+          stat = "identity", position = position_dodge(), alpha = 0.7) +
+  geom_bar(aes(y = pct_missing_affected, fill = "Affected"), 
+          stat = "identity", position = position_dodge(), alpha = 0.7) +
+  scale_fill_manual(values = c("Deaths" = "darkred", "Affected" = "steelblue")) +
+  labs(title = "Pourcentage de valeurs manquantes par région",
+       x = "Région",
+       y = "Pourcentage de valeurs manquantes",
+       fill = "Variable") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Graphique par type de catastrophe
+p2 <- missing_by_type %>%
+  ggplot(aes(x = reorder(disaster_type, pct_missing_deaths))) +
+  geom_bar(aes(y = pct_missing_deaths, fill = "Deaths"), 
+          stat = "identity", position = position_dodge(), alpha = 0.7) +
+  geom_bar(aes(y = pct_missing_affected, fill = "Affected"), 
+          stat = "identity", position = position_dodge(), alpha = 0.7) +
+  scale_fill_manual(values = c("Deaths" = "darkred", "Affected" = "steelblue")) +
+  labs(title = "Pourcentage de valeurs manquantes par type de catastrophe",
+       x = "Type de catastrophe",
+       y = "Pourcentage de valeurs manquantes",
+       fill = "Variable") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Graphique temporel
+p3 <- missing_by_year %>%
+  ggplot(aes(x = year)) +
+  geom_line(aes(y = pct_missing_deaths, color = "Deaths"), size = 1) +
+  geom_line(aes(y = pct_missing_affected, color = "Affected"), size = 1) +
+  geom_point(aes(y = pct_missing_deaths, color = "Deaths")) +
+  geom_point(aes(y = pct_missing_affected, color = "Affected")) +
+  scale_color_manual(values = c("Deaths" = "darkred", "Affected" = "steelblue")) +
+  labs(title = "Évolution des valeurs manquantes au fil du temps",
+       x = "Année",
+       y = "Pourcentage de valeurs manquantes",
+       color = "Variable") +
+  theme_minimal()
+
+# Affichage des graphiques
+gridExtra::grid.arrange(p1, p2, p3, ncol = 2)
+```
+
+Cette analyse visuelle des valeurs manquantes révèle plusieurs patterns
+importants :
+
+1.  **Distribution géographique** :
+    -   L'Océanie et l'Europe présentent les plus hauts taux de valeurs
+        manquantes
+    -   L'Asie montre le taux le plus faible, suggérant une meilleure
+        qualité de collecte des données
+2.  **Par type de catastrophe** :
+    -   Certains types comme "Impact" et "Infestation" ont des taux très
+        élevés de données manquantes
+    -   Les catastrophes de type "Mass movement" et "Animal incident"
+        sont mieux documentées
+3.  **Évolution temporelle** :
+    -   Une tendance à la stabilisation des taux de valeurs manquantes
+        depuis les années 2000
+    -   Une amélioration générale de la collecte de données par rapport
+        aux années 1980-1990
+
+Ces observations vont nous guider dans notre stratégie de traitement des
+données manquantes.
+
+## 1.4 Traitement des valeurs manquantes
+
+Face à ces patterns de valeurs manquantes, nous optons pour une approche
+de suppression simple des observations incomplètes pour garantir la
+fiabilité de nos analyses futures.
+
+```{r data_cleaning, echo=FALSE}
+# Suppression des valeurs manquantes
+data_clean <- na.omit(data)
+
+# Vérification des dimensions avant/après nettoyage
+cat("Dimensions avant nettoyage :", dim(data), "\n")
+cat("Dimensions après nettoyage :", dim(data_clean), "\n")
+
+# Calcul du pourcentage de données conservées
+pct_conserve <- round((nrow(data_clean)/nrow(data))*100, 2)
+cat("Pourcentage de données conservées :", pct_conserve, "%\n")
+
+# Comparaison des statistiques avant/après nettoyage
+summary_comparison <- data.frame(
+  Statistique = c("Nombre d'observations", 
+                 "Moyenne des décès",
+                 "Médiane des décès",
+                 "Moyenne des affectés",
+                 "Médiane des affectés"),
+  Avant = c(nrow(data),
+            round(mean(data$total_deaths, na.rm = TRUE), 2),
+            median(data$total_deaths, na.rm = TRUE),
+            round(mean(data$total_affected, na.rm = TRUE), 2),
+            median(data$total_affected, na.rm = TRUE)),
+  Après = c(nrow(data_clean),
+            round(mean(data_clean$total_deaths), 2),
+            median(data_clean$total_deaths),
+            round(mean(data_clean$total_affected), 2),
+            median(data_clean$total_affected))
+)
+
+# Affichage du tableau de comparaison
+knitr::kable(summary_comparison, 
+             caption = "Comparaison des statistiques avant et après nettoyage",
+             format = "markdown")
+```
+
+Notre processus de nettoyage a conduit à une réduction significative du
+jeu de données, passant de 14,936 à 7,148 observations (47.86% des
+données initiales conservées). Malgré cette réduction importante,
+plusieurs éléments justifient notre choix :
+
+1.  **Volume suffisant** : Plus de 7,000 observations restent
+    disponibles pour l'analyse et la modélisation
+
+2.  **Qualité des données** : Les statistiques descriptives avant/après
+    nettoyage montrent que la structure générale des données est
+    préservée
+
+3.  **Fiabilité** : Les observations conservées sont complètes et
+    permettront des analyses robustes
+
+À présent que nos données sont nettoyées, nous pouvons procéder à leur
+analyse descriptive détaillée.
+
+# 2. Analyse Exploratoire des Données
+
+## 2.1 Analyse Descriptive Univariée
+
+Notre objectif étant de prédire l'impact humain des catastrophes
+naturelles, nous nous concentrons sur la variable `total_deaths` comme
+variable d'intérêt principale. Cette variable représente le nombre total
+de décès directement attribuables à chaque catastrophe naturelle,
+constituant ainsi un indicateur crucial de la gravité de l'événement.
+
+### 2.1.1 Sélection des variables explicatives
+
+Pour prédire le nombre de décès, nous avons identifié plusieurs
+variables explicatives pertinentes :
+
+```{r variables_selection, echo=FALSE}
+# Liste des variables sélectionnées avec leur justification
+variables_explicatives <- data.frame(
+  Variable = c("disaster_type", "disaster_subtype", "region", "total_affected", 
+               "event_duration", "year"),
+  Justification = c(
+    "Nature de la catastrophe, influençant directement le potentiel de mortalité",
+    "Précision sur le type spécifique, permettant une granularité plus fine",
+    "Zone géographique, reflétant les différences de vulnérabilité et de résilience",
+    "Ampleur de l'impact sur la population, fortement corrélée aux décès",
+    "Durée de l'événement, pouvant influencer la gravité des impacts",
+    "Année de l'événement, capturant l'évolution des capacités de réponse"
+  )
+)
+
+knitr::kable(variables_explicatives, 
+             caption = "Variables explicatives sélectionnées et leur justification",
+             format = "markdown")
+```
+
+### 2.1.2 Distribution de la variable d'intérêt : Total Deaths
+
+```{r distribution_target, fig.width=10, fig.height=6, echo=FALSE}
+# Distribution de total_deaths
+p1 <- ggplot(data_clean, aes(x = total_deaths)) +
+  geom_histogram(fill = "steelblue", alpha = 0.7, bins = 50) +
+  labs(title = "Distribution du nombre de décès",
+       x = "Nombre de décès",
+       y = "Fréquence") +
+  theme_minimal()
+
+# Distribution avec transformation logarithmique
+data_clean$log_deaths <- log1p(data_clean$total_deaths)
+p2 <- ggplot(data_clean, aes(x = log_deaths)) +
+  geom_histogram(fill = "steelblue", alpha = 0.7, bins = 50) +
+  labs(title = "Distribution du log(nombre de décès + 1)",
+       x = "Log(nombre de décès + 1)",
+       y = "Fréquence") +
+  theme_minimal()
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+# Statistiques descriptives pour les deux variables
+summary_stats <- data.frame(
+ Statistiques = c("Minimum", "1er Quartile", "Médiane", "Moyenne", 
+                 "3e Quartile", "Maximum", "Écart-type"),
+ 
+ Décès = c(
+   min(data_clean$total_deaths),
+   quantile(data_clean$total_deaths, 0.25),
+   median(data_clean$total_deaths),
+   mean(data_clean$total_deaths),
+   quantile(data_clean$total_deaths, 0.75),
+   max(data_clean$total_deaths),
+   sd(data_clean$total_deaths)
+ ),
+ 
+ Log_Décès = c(
+   min(data_clean$log_deaths),
+   quantile(data_clean$log_deaths, 0.25),
+   median(data_clean$log_deaths),
+   mean(data_clean$log_deaths),
+   quantile(data_clean$log_deaths, 0.75),
+   max(data_clean$log_deaths),
+   sd(data_clean$log_deaths)
+ )
+)
+
+# Arrondis pour une meilleure lisibilité
+summary_stats$Décès <- round(summary_stats$Décès, 2)
+summary_stats$Log_Décès <- round(summary_stats$Log_Décès, 2)
+
+knitr::kable(summary_stats, 
+            caption = "Statistiques descriptives du nombre de décès et de leur logarithme",
+            format = "markdown")
+```
+
+La distribution de notre variable cible `total_deaths` présente une
+forte asymétrie positive, caractéristique courante des données de
+catastrophes naturelles. Cette distribution justifie :
+
+1.  L'utilisation d'une transformation logarithmique pour nos analyses
+    et modélisations futures
+2.  La nécessité de tenir compte des valeurs extrêmes qui représentent
+    des catastrophes majeures
+3.  L'importance d'une approche robuste dans notre méthodologie de
+    prédiction
+
+L'analyse des statistiques descriptives révèle plusieurs points
+importants :
+
+1.  **Distribution fortement asymétrique des décès** :
+    -   La moyenne (250.81) est nettement supérieure à la médiane
+        (13.00), indiquant une forte asymétrie à droite
+    -   L'écart important entre la médiane et le maximum (222,570)
+        montre la présence de valeurs extrêmes
+    -   75% des catastrophes causent moins de 41 décès (3e quartile),
+        tandis que certains événements extrêmes peuvent causer plus de
+        200,000 décès
+2.  **Effet de la transformation logarithmique** :
+    -   La transformation log réduit considérablement l'écart entre la
+        moyenne (2.85) et la médiane (2.64)
+    -   L'écart-type passe de 4420.58 à 1.58, indiquant une
+        stabilisation de la variance
+    -   Les valeurs extrêmes sont mieux gérées : le maximum passe de
+        222,570 à 12.31 sur l'échelle logarithmique
+
+Cette transformation logarithmique s'avère donc pertinente pour : -
+Réduire l'influence des valeurs extrêmes - Stabiliser la variance -
+Obtenir une distribution plus proche de la normale, ce qui sera
+bénéfique pour nos futures analyses statistiques et modélisations
+
+### 2.1.3 Variables quantitatives
+
+```{r quantitative_vars, fig.width=12, fig.height=4, echo=FALSE}
+# Couleur rose pastel
+rose_pastel <- "#FFD1DC"
+
+# Histogramme
+p1 <- ggplot(data_clean, aes(x = total_affected)) +
+  geom_histogram(fill = rose_pastel, bins = 30) +
+  scale_x_log10() +
+  labs(title = "Histogramme - Total des personnes affectées",
+       x = "Total des personnes affectées",
+       y = "Nombre d'observations") +
+  theme_minimal()
+
+# Densité
+p2 <- ggplot(data_clean, aes(x = total_affected)) +
+  geom_density(fill = rose_pastel, alpha = 0.5) +
+  scale_x_log10() +
+  labs(title = "Densité - Total des personnes affectées",
+       x = "Total des personnes affectées",
+       y = "Densité") +
+  theme_minimal()
+
+# Boxplot
+p3 <- ggplot(data_clean, aes(y = total_affected)) +
+  geom_boxplot(fill = rose_pastel, alpha = 0.5) +
+  scale_y_log10() +
+  labs(title = "Boxplot - Total des personnes affectées",
+       y = "Total des personnes affectées") +
+  theme_minimal() +
+  coord_flip()
+
+
+# Arrangement des graphiques
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+**Interprétation pour Total Affected :** L'analyse de la distribution
+des personnes affectées révèle une asymétrie forte avec la majorité des
+catastrophes touchant entre 10³ et 10⁵ personnes. Les valeurs extrêmes,
+représentant des catastrophes majeures affectant des millions de
+personnes, sont nombreuses mais plus rares. Cette distribution fortement
+asymétrique justifie l'utilisation d'une échelle logarithmique pour nos
+analyses futures et suggère des impacts très variables selon le type et
+l'ampleur des catastrophes.
+
+```{r quantitative_vars 2, fig.width=12, fig.height=4, echo=FALSE}
+# Histogramme
+p1 <- ggplot(data_clean, aes(x = event_duration)) +
+  geom_histogram(fill = "lightgreen", bins = 30) +
+  scale_x_log10() +
+  labs(title = "Histogramme - Durée de l'événement",
+       x = "Durée de l'événement",
+       y = "Nombre d'observations") +
+  theme_minimal()
+
+# Densité
+p2 <- ggplot(data_clean, aes(x = event_duration)) +
+  geom_density(fill = "lightgreen", alpha = 0.5) +
+  scale_x_log10() +
+  labs(title = "Densité - Durée de l'événement",
+       x = "Durée de l'événement",
+       y = "Densité") +
+  theme_minimal()
+
+# Boxplot
+p3 <- ggplot(data_clean, aes(y = event_duration)) +
+  geom_boxplot(fill = "lightgreen", alpha = 0.5) +
+  scale_y_log10() +
+  labs(title = "Boxplot - Durée de l'événement",
+       y = "Durée de l'événement") +
+  theme_minimal() + 
+  coord_flip()
+
+# Arrangement des graphiques
+grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+**Interprétation pour Event Duration :** La durée des événements montre
+également une distribution asymétrique avec une concentration marquée
+sur des durées courtes (1-10 jours). Le pic initial suivi d'une
+décroissance rapide indique que la plupart des catastrophes sont de
+courte durée, mais certaines peuvent s'étendre sur plusieurs semaines,
+voire mois (valeurs extrêmes \> 100 jours). Cette distribution suggère
+l'importance de distinguer les catastrophes ponctuelles des événements
+prolongés dans nos analyses.
+
+### 2.1.4 Variables qualitatives
+
+```{r, echo=FALSE}
+# Création de classes pour l'année
+data_clean <- data_clean %>%
+  mutate(
+    periode = case_when(
+      year <= 1990 ~ "1980-1990",
+      year <= 2000 ~ "1991-2000", 
+      year <= 2010 ~ "2001-2010",
+      year <= 2020 ~ "2011-2020",
+      TRUE ~ "2021-2024"
+    )
+  )
+
+
+# Création de la variable de niveau de gravité
+data_clean <- data_clean %>%
+  mutate(
+    niveau_gravite = case_when(
+      log_deaths <= quantile(log_deaths, 0.33) ~ "Faible",
+      log_deaths <= quantile(log_deaths, 0.66) ~ "Modéré",
+      TRUE ~ "Sévère"
+    )
+  )
+```
+
+```{r, fig.width=12, fig.height=8, dpi=300, out.width="100%", fig.align='center', echo=FALSE}
+# Augmenter la taille de police pour les étiquettes des axes
+axis_text_size <- 12
+
+# Graphique pour la répartition par région
+p1 <- ggplot(data_clean, aes(x = reorder(region, region, function(x) -length(x)), 
+                            fill = region)) +
+  geom_bar() +
+  geom_text(stat = "count", 
+            aes(label = scales::percent(..count../sum(..count..))), 
+            position = position_stack(vjust = 0.5)) +  
+  labs(title = "Répartition par région",
+       x = "Région",
+       y = "Nombre d'observations") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = axis_text_size),
+        legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12)) +
+  scale_fill_brewer(palette = "Set3")
+
+# Graphique pour la répartition par période
+p2 <- ggplot(data_clean, aes(x = periode, fill = periode)) +
+  geom_bar() +
+  geom_text(stat = "count", 
+            aes(label = scales::percent(..count../sum(..count..))), 
+            position = position_stack(vjust = 0.5)) +
+  labs(title = "Répartition par période",
+       x = "Période",
+       y = "Nombre d'observations") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = axis_text_size),
+        legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12)) +
+  scale_fill_brewer(palette = "Set3")
+
+# Graphique pour la répartition par niveau de gravité 
+p3 <- ggplot(data_clean, aes(x = niveau_gravite, fill = niveau_gravite)) +
+  geom_bar() +
+  geom_text(stat = "count",
+            aes(label = scales::percent(..count../sum(..count..))),
+            position = position_stack(vjust = 0.5)) +
+  labs(title = "Répartition par niveau de gravité",
+       x = "Niveau de gravité", 
+       y = "Nombre d'observations") +
+  theme_minimal() +
+  theme(legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12),
+        axis.text.x = element_text(size = axis_text_size)) +
+  scale_fill_brewer(palette = "Set3")
+
+# Calculer le nombre d'observations par type de désastre
+disaster_counts <- data_clean %>% 
+  group_by(disaster_type) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+# Sélectionner les 5 premiers types de désastres
+top_5_disasters <- disaster_counts$disaster_type[1:5]
+
+# Regrouper les autres types dans une catégorie "Autres"
+data_clean <- data_clean %>%
+  mutate(disaster_type = ifelse(disaster_type %in% top_5_disasters, disaster_type, "Autres"))
+
+# Graphique pour la répartition par type de désastre (top 5)
+p4 <- ggplot(data_clean, aes(x = reorder(disaster_type, disaster_type, function(x) -length(x)), 
+                            fill = factor(disaster_type))) +
+  geom_bar() +
+  geom_text(stat = "count", 
+            aes(label = scales::percent(..count../sum(..count..))), 
+            position = position_stack(vjust = 0.5),
+            size = 4) +
+  labs(title = "Répartition par type de désastre (Top 5)",
+       x = "Type de désastre",
+       y = "Nombre d'observations") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = axis_text_size),
+        legend.position = "none",
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title = element_text(size = 12)) +
+  scale_fill_brewer(palette = "Set3")
+
+# Calculer le nombre d'observations par sous-type de désastre
+disaster_subtype_counts <- data_clean %>% 
+ group_by(disaster_subtype) %>%
+ summarise(count = n()) %>%
+ arrange(desc(count))
+
+# Sélectionner les 5 premiers sous-types
+top_5_subtypes <- disaster_subtype_counts$disaster_subtype[1:5]
+
+# Créer une copie temporaire pour le graphique
+data_plot <- data_clean %>%
+ mutate(disaster_subtype = ifelse(disaster_subtype %in% top_5_subtypes, 
+                                 disaster_subtype, "Autres"))
+
+# Graphique pour la répartition par sous-type de désastre (top 5)
+p5 <- ggplot(data_plot, 
+            aes(x = reorder(disaster_subtype, disaster_subtype, 
+                           function(x) -length(x)), 
+                fill = factor(disaster_subtype))) +
+ geom_bar() +
+ geom_text(stat = "count", 
+           aes(label = scales::percent(..count../sum(..count..))), 
+           position = position_stack(vjust = 0.5),
+           size = 4) +
+ labs(title = "Répartition par sous-type de désastre (Top 5)",
+      x = "Sous-type de désastre",
+      y = "Nombre d'observations") +
+ theme_minimal() +
+ theme(axis.text.x = element_text(angle = 45, hjust = 1, size = axis_text_size),
+       legend.position = "none",
+       plot.title = element_text(size = 14, face = "bold"),
+       axis.title = element_text(size = 12)) +
+ scale_fill_brewer(palette = "Set3")
+
+# Arrangement des graphiques
+grid.arrange(p1, p2, ncol = 2)
+grid.arrange(p4, p5, p3, ncol = 2)
+
+```
+
+L'analyse de la distribution des catastrophes naturelles révèle
+plusieurs aspects importants :
+
+1.  **Distribution par niveau de gravité** :
+
+-   La répartition est remarquablement équilibrée entre les trois
+    niveaux de gravité (environ 33% chacun)
+-   Cette distribution équilibrée résulte de notre catégorisation basée
+    sur les terciles du logarithme du nombre de décès
+
+2.  **Distribution par type de catastrophe** :
+
+-   Les inondations (Flood) dominent largement avec 43.5% des événements
+-   Les tempêtes (Storm) représentent près d'un tiers des catastrophes
+    (29.9%)
+-   Les séismes (Earthquake) constituent 9.9% des événements
+-   Les épidémies et les mouvements de masse sont moins fréquents (\<8%
+    chacun)
+
+3.  **Analyse des sous-types de catastrophes** :
+
+-   Les inondations se décomposent en plusieurs sous-types :
+    -   Riverine flood (22.0%)
+    -   Flash flood (7.9%)
+    -   Flood General (13.1%)
+-   Les cyclones tropicaux représentent 18.1% des événements
+-   Les mouvements de terrain (Ground movement) constituent 9.5%
+-   La catégorie "Autres" (29.4%) regroupe de nombreux sous-types moins
+    fréquents
+
+Cette distribution détaillée souligne l'importance particulière des
+inondations et de leurs différentes manifestations dans notre jeu de
+données, ainsi que la grande diversité des catastrophes naturelles
+étudiées.
+
+## 2.2 Analyse Bivariée
+
+### 2.2.1 Distribution de la variable d'intérêt selon les variables catégorielles
+
+```{r distribution_by_categories, fig.width=12, fig.height=12, echo=FALSE}
+# 1. Distribution par région
+p1 <- ggplot(data_clean, aes(x = reorder(region, log_deaths, FUN = median), 
+                            y = log_deaths,
+                            fill = region)) +
+  geom_violin(alpha = 0.7) +
+  geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Distribution des décès par région",
+       x = "Région",
+       y = "Log(nombre de décès + 1)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+# 2. Distribution par période
+p2 <- ggplot(data_clean, aes(x = periode, 
+                            y = log_deaths,
+                            fill = periode)) +
+  geom_violin(alpha = 0.7) +
+  geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Distribution des décès par période",
+       x = "Période",
+       y = "Log(nombre de décès + 1)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+# 3. Distribution par type de désastre (top 5)
+p3 <- ggplot(data_clean, aes(x = reorder(disaster_type, log_deaths, FUN = median), 
+                            y = log_deaths,
+                            fill = disaster_type)) +
+  geom_violin(alpha = 0.7) +
+  geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Distribution des décès par type de désastre",
+       x = "Type de désastre",
+       y = "Log(nombre de décès + 1)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+# 4. Distribution par niveau de gravité
+p4 <- ggplot(data_clean, aes(x = niveau_gravite, 
+                            y = log_deaths,
+                            fill = niveau_gravite)) +
+  geom_violin(alpha = 0.7) +
+  geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Distribution des décès par niveau de gravité",
+       x = "Niveau de gravité",
+       y = "Log(nombre de décès + 1)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+# Créer une copie temporaire des données avec top 5 des sous-types
+subtype_counts <- data_clean %>% 
+  group_by(disaster_subtype) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+top_5_subtypes <- subtype_counts$disaster_subtype[1:5]
+
+data_plot <- data_clean %>%
+  mutate(disaster_subtype = ifelse(disaster_subtype %in% top_5_subtypes, 
+                                  disaster_subtype, "Autres"))
+
+# 5. Distribution par sous-type de désastre (top 5)
+p5 <- ggplot(data_plot, aes(x = reorder(disaster_subtype, log_deaths, FUN = median), 
+                           y = log_deaths,
+                           fill = disaster_subtype)) +
+  geom_violin(alpha = 0.7) +
+  geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Distribution des décès par sous-type de désastre",
+       x = "Sous-type de désastre",
+       y = "Log(nombre de décès + 1)") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Set3")
+
+# Nouvel arrangement des graphiques
+gridExtra::grid.arrange(p1, p2, p3, p4, p5, ncol = 2)
+```
+
+L'analyse des violin plots combinés avec les box plots révèle des
+patterns de distribution du nombre de décès (en échelle logarithmique)
+selon différentes dimensions :
+
+1.  **Distribution par région** :
+
+-   L'Asie présente la distribution la plus étalée avec des valeurs
+    extrêmes importantes
+-   L'Afrique montre une concentration plus élevée des décès dans la
+    partie supérieure
+-   L'Europe et l'Océanie ont les distributions les plus compactes,
+    suggérant des impacts plus modérés
+
+2.  **Évolution temporelle** :
+
+-   La période 1980-1990 montre une plus grande variabilité dans le
+    nombre de décès
+-   Une tendance à la réduction de la dispersion est visible pour les
+    périodes récentes (2011-2024)
+-   La médiane reste relativement stable à travers les périodes
+
+3.  **Par type de catastrophe** :
+
+-   Les séismes (Earthquake) montrent la plus grande variabilité et les
+    valeurs extrêmes les plus élevées
+-   Les épidémies (Epidemic) présentent une distribution bimodale
+-   Les inondations (Flood) et tempêtes (Storm) ont des distributions
+    similaires mais plus modérées
+
+4.  **Par sous-type de catastrophe** :
+
+-   Les cyclones tropicaux et les mouvements de terrain présentent les
+    valeurs extrêmes les plus élevées
+-   Les inondations fluviales (Riverine flood) montrent une distribution
+    plus concentrée
+-   Les crues soudaines (Flash flood) ont une distribution plus compacte
+    mais avec des outliers significatifs
+
+5.  **Par niveau de gravité** : La distinction nette entre les trois
+    niveaux confirme la pertinence de notre catégorisation, avec une
+    progression claire de l'impact :
+
+-   Niveau faible : distribution très concentrée
+-   Niveau modéré : distribution intermédiaire
+-   Niveau sévère : grande dispersion avec nombreuses valeurs extrêmes
+
+Ces distributions soulignent l'importance de considérer ces différentes
+dimensions dans notre modélisation prédictive.
+
+### 2.2.2 Analyse des relations bivariées
+
+```{r bivariate_analysis, fig.width=15, fig.height=25, echo=FALSE}
+# Transformation logarithmique des données
+data_clean <- data_clean %>%
+ mutate(log_affected = log1p(total_affected))
+
+# Fonction pour créer les scatter plots
+create_scatter_plots <- function(var_x, x_lab) {
+  # Par région
+  p1 <- ggplot(data_clean, aes(x = {{var_x}}, y = log_deaths, color = region)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", color = "red", se = TRUE) +
+    labs(title = paste("Relation entre décès et", x_lab, "par région"),
+         x = x_lab,
+         y = "Log(nombre de décès + 1)") +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set3")
+
+  # Par type de désastre
+  p2 <- ggplot(data_clean, aes(x = {{var_x}}, y = log_deaths, color = disaster_type)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", color = "red", se = TRUE) +
+    labs(title = paste("Relation entre décès et", x_lab, "par type de désastre"),
+         x = x_lab,
+         y = "Log(nombre de décès + 1)") +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set3")
+
+  # Par sous-type de désastre (top 5)
+  subtype_counts <- data_clean %>% 
+    group_by(disaster_subtype) %>%
+    summarise(count = n()) %>%
+    arrange(desc(count))
+  
+  top_5_subtypes <- subtype_counts$disaster_subtype[1:5]
+  
+  data_plot <- data_clean %>%
+    mutate(disaster_subtype = ifelse(disaster_subtype %in% top_5_subtypes, 
+                                    disaster_subtype, "Autres"))
+  
+  p3 <- ggplot(data_plot, aes(x = {{var_x}}, y = log_deaths, color = disaster_subtype)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", color = "red", se = TRUE) +
+    labs(title = paste("Relation entre décès et", x_lab, "par sous-type de désastre"),
+         x = x_lab,
+         y = "Log(nombre de décès + 1)") +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set3")
+
+  # Par période
+  p4 <- ggplot(data_clean, aes(x = {{var_x}}, y = log_deaths, color = periode)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", color = "red", se = TRUE) +
+    labs(title = paste("Relation entre décès et", x_lab, "par période"),
+         x = x_lab,
+         y = "Log(nombre de décès + 1)") +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set3")
+
+  # Par niveau de gravité
+  p5 <- ggplot(data_clean, aes(x = {{var_x}}, y = log_deaths, color = niveau_gravite)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", color = "red", se = TRUE) +
+    labs(title = paste("Relation entre décès et", x_lab, "par niveau de gravité"),
+         x = x_lab,
+         y = "Log(nombre de décès + 1)") +
+    theme_minimal() +
+    scale_color_brewer(palette = "Set3")
+
+  return(list(p1, p2, p3, p4, p5))
+}
+
+# Création des graphiques pour total_affected
+plots_affected <- create_scatter_plots(log_affected, "Log(personnes affectées + 1)")
+
+# Création des graphiques pour event_duration
+plots_duration <- create_scatter_plots(event_duration, "Durée de l'événement")
+
+# Arrangement de tous les graphiques
+gridExtra::grid.arrange(
+  plots_affected[[1]], plots_affected[[2]], plots_affected[[3]], 
+  plots_affected[[4]], plots_affected[[5]],
+  plots_duration[[1]], plots_duration[[2]], plots_duration[[3]], 
+  plots_duration[[4]], plots_duration[[5]],
+  ncol = 2
+)
+```
+
+Analysons ces graphiques en détail :
+
+1.  **Relation entre décès et personnes affectées** :
+
+-   Une corrélation positive générale : plus il y a de personnes
+    affectées, plus le nombre de décès tend à augmenter
+-   **Par région** : L'Asie montre une plus grande dispersion et des
+    valeurs plus élevées
+-   **Par type** : Les séismes et épidémies se distinguent avec des
+    ratios décès/affectés plus élevés
+-   **Par période** : La relation reste stable dans le temps
+-   **Par niveau** : La segmentation montre clairement trois niveaux
+    distincts de gravité, validant notre catégorisation
+
+2.  **Relation entre décès et durée de l'événement** :
+
+-   Relation moins évidente qu'avec les personnes affectées
+-   **Par région** : Pas de pattern distinct entre régions
+-   **Par type** :
+    -   Les épidémies ont tendance à avoir des durées plus longues
+    -   Les séismes sont concentrés sur des durées courtes
+-   **Par période** : Pas d'évolution notable de la relation au fil du
+    temps
+-   **Par niveau** : La durée ne semble pas être un facteur déterminant
+    du niveau de gravité
+
+Ces observations suggèrent que :
+
+1.  Le nombre de personnes affectées est un meilleur prédicteur du
+    nombre de décès que la durée
+
+2.  Le type de catastrophe influence significativement la relation entre
+    ces variables
+
+3.  La dimension temporelle a peu d'impact sur ces relations
+
+Ces insights seront précieux pour notre modélisation future.
+
+### 2.2.3 Visualisation géographique
+
+```{r map_visualization, fig.width=15, fig.height=10, echo=FALSE}
+# Agrégation des données par pays
+map_data <- data_clean %>%
+  group_by(country) %>%
+  summarise(
+    nb_catastrophes = n(),
+    total_deces = sum(total_deaths)
+  ) %>%
+  ungroup()
+
+# Obtenir les données de la carte mondiale avec ne_countries
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Harmonisation des noms de pays
+map_data <- map_data %>%
+  mutate(country = case_when(
+    country == "United States" ~ "United States of America",
+    country == "Russia" ~ "Russian Federation",
+    country == "Congo" ~ "Democratic Republic of the Congo",
+    TRUE ~ country
+  ))
+
+# Joindre les données
+world_data <- world %>%
+  left_join(map_data, by = c("sovereignt" = "country"))
+
+# Calculer les centroids pour les points
+centroids <- st_centroid(world_data)
+centroids_coords <- do.call(rbind, st_geometry(centroids)) %>%
+  as.data.frame() %>%
+  setNames(c("lon", "lat"))
+
+world_data_with_coords <- world_data %>%
+  bind_cols(centroids_coords)
+
+# Création de la carte
+ggplot() +
+  # Fond de carte
+  geom_sf(data = world_data, aes(fill = nb_catastrophes)) +
+  # Bulles pour les décès
+  geom_point(data = world_data_with_coords,
+             aes(x = lon, y = lat, size = total_deces),
+             alpha = 0.5, color = "red") +
+  # Échelles et légendes
+  scale_fill_viridis_c(name = "Nombre de\ncatastrophes", 
+                      option = "D", 
+                      na.value = "grey90") +
+  scale_size_continuous(name = "Nombre de décès",
+                       range = c(0.5, 12)) +
+  # Thème et titre
+  theme_minimal() +
+  labs(title = "Répartition mondiale des catastrophes naturelles et leurs impacts",
+       subtitle = "Couleur : nombre de catastrophes | Taille des bulles : nombre de décès") +
+  theme(legend.position = "right")
+```
+
+# 3. Prétraitement pour Machine Learning
+
+Avant de procéder à la modélisation, une étape cruciale de préparation
+des données est nécessaire afin de les rendre exploitables par les
+algorithmes de machine learning.
+
+## 3.1 Création de Classes et Catégorisation
+
+```{r}
+### 3.1.1 Catégorisation par Années
+data_clean <- data_clean %>%
+  mutate(
+    periode = case_when(
+      year <= 1990 ~ "1980-1990",
+      year <= 2000 ~ "1991-2000", 
+      year <= 2010 ~ "2001-2010",
+      year <= 2020 ~ "2011-2020",
+      TRUE ~ "2021-2024"
+    )
+  )
+
+### 3.1.2 Catégorisation de la Durée d'Événement
+data_clean <- data_clean %>%
+  mutate(
+    duree_categorie = cut(event_duration, 
+                          breaks = c(0, 1, 7, 30, Inf),
+                          labels = c("Très Court", "Court", "Moyen", "Long"),
+                          right = FALSE)
+  )
+
+### 3.1.3 Niveau de Gravité des Catastrophes
+data_clean <- data_clean %>%
+  mutate(
+    niveau_gravite = case_when(
+      log_deaths <= quantile(log_deaths, 0.33) ~ "Faible",
+      log_deaths <= quantile(log_deaths, 0.66) ~ "Modéré",
+      TRUE ~ "Sévère"
+    )
+  )
+
+```
+
+## 3.2 Transformation des Variables Catégorielles
+
+```{r}
+### 3.2.1 Conversion des Variables Caractères en Facteurs
+colonnes_a_convertir <- c("disaster_type", "disaster_subtype", 
+                           "country", "region", "subregion", 
+                           "periode", "niveau_gravite", "duree_categorie")
+
+data_clean <- data_clean %>%
+  mutate(across(all_of(colonnes_a_convertir), as.factor))
+```
+
+## 3.3 Analyse des Corrélations
+
+```{r, echo=FALSE}
+### 3.3.1 Sélection des Variables Numériques
+numeric_columns <- names(data_clean)[sapply(data_clean, is.numeric)]
+
+### 3.3.2 Calcul de la Matrice de Corrélation
+correlation_matrix <- cor(data_clean[, numeric_columns], use = "complete.obs")
+
+### 3.3.3 Visualisation
+corrplot(correlation_matrix, 
+         method = "color", 
+         type = "upper", 
+         tl.col = "black", 
+         tl.cex = 0.7,
+         title = "Matrice de Corrélation des Variables Numériques",
+         tl.srt = 45, 
+         mar = c(0, 0, 2, 0))
+```
+
+L'analyse de la matrice de corrélation révèle plusieurs relations
+importantes :
+
+1.  **Relations avec notre variable cible (total_deaths et log_deaths)**:
+    -   Forte corrélation positive avec log_affected (0.8-0.9)
+    -   Corrélation modérée avec event_duration (0.3-0.4)
+    -   Corrélation quasi-nulle avec year
+2.  **Impact de la transformation logarithmique** :
+    -   La transformation améliore la linéarité des relations
+    -   log_deaths et log_affected montrent une corrélation plus forte
+        (0.9) que leurs versions non transformées
+    -   Cette transformation justifie notre choix d'utiliser les
+        variables transformées pour la modélisation
+3.  **Implications pour la modélisation** :
+    -   Les variables log_affected et log_deaths étant fortement
+        corrélées, il faudra être vigilant à la multicolinéarité
+    -   La faible corrélation avec year suggère que cette variable
+        pourrait être moins pertinente pour la prédiction
+
+Le prétraitement des données a permis de créer des variables
+catégorielles pertinentes, de convertir les variables caractères en
+facteurs, et d'analyser les corrélations entre les variables numériques
+afin de préparer les modèles de machine learning.
+
+# 4. Machine Learning
+
+```{r selection_models, echo=FALSE}
+models_table <- data.frame(
+  Modèle = c("Random Forest", "XGBoost", "Régression Linéaire", "SVR"),
+  Type = c("Ensemble Learning", "Gradient Boosting", "Modèle linéaire", "Support Vector Machine"),
+  Justification = c(
+    "Robuste aux outliers, gère naturellement les variables catégorielles, bonne capacité de généralisation",
+    "Performance reconnue sur des données complexes, capture efficacement les relations non-linéaires",
+    "Modèle de référence simple, facilement interprétable, base de comparaison",
+    "Efficace pour les relations non-linéaires, robuste avec les données normalisées"
+  )
+)
+
+knitr::kable(models_table,
+             caption = "Justification du choix des modèles",
+             align = c('l', 'l', 'l'))
+```
+
+Cette sélection diversifiée de modèles permet d'explorer différentes approches de machine learning, des plus simples aux plus sophistiquées.
+
+Chaque modèle apporte ses propres forces pour traiter notreproblématique de prédiction du nombre de décès lors de catastrophes naturelles. Cette variété nous permettra également d'évaluer le compromis entre complexité et performance pour sélectionner la solution la plus adaptée.
+
+## 4.1 Préparation des données pour la modélisation
+
+```{r split_data, echo=FALSE}
+# Séparation en ensembles d'entraînement et de test
+set.seed(123) # Pour la reproductibilité
+train_index <- sample(1:nrow(data_clean), 0.8 * nrow(data_clean))
+train_data <- data_clean[train_index, ]
+test_data <- data_clean[-train_index, ]
+
+# Vérification des dimensions
+cat("Dimensions du jeu d'entraînement :", dim(train_data), "\n")
+cat("Dimensions du jeu de test :", dim(test_data), "\n")
+
+# Variables à utiliser pour la modélisation
+features <- c("disaster_type", "disaster_subtype", "region", "subregion", 
+              "log_affected", "event_duration", "duree_categorie", "periode")
+
+# Variable cible
+target <- "log_deaths"
+```
+
+## 4.2 Modélisation avec Random Forest
+
+```{r rf_model, message=FALSE, warning=FALSE, include=FALSE}
+# Paramètres de contrôle pour la validation croisée
+ctrl <- trainControl(
+ method = "cv",          # Validation croisée
+ number = 5,             # 5 folds
+ verboseIter = TRUE     # Afficher la progression
+)
+
+# Grille de paramètres à tester
+grid <- expand.grid(
+ mtry = seq(2, length(features), by = 2)  # Nombre de variables à chaque split
+)
+
+# Entraînement du modèle avec validation croisée
+rf_model <- train(
+ x = train_data[, features],
+ y = train_data[[target]],
+ method = "rf",
+ trControl = ctrl,
+ tuneGrid = grid,
+ importance = TRUE,
+ ntree = 500
+)
+```
+
+```{r rf_model print, message=FALSE, warning=FALSE, echo=FALSE}
+# Affichage des résultats
+print(rf_model)
+```
+
+```{r rf_model affichage, message=FALSE, warning=FALSE, echo=FALSE}
+# Importance des variables
+var_imp <- varImp(rf_model)
+print(var_imp)
+
+# Visualisation de l'importance des variables
+ggplot(var_imp) +
+ theme_minimal() +
+ ggtitle("Importance des variables dans le modèle Random Forest")
+
+# Prédictions sur l'ensemble de test
+predictions <- predict(rf_model, newdata = test_data)
+
+# Évaluation des performances
+metrics <- data.frame(
+ RMSE = sqrt(mean((test_data[[target]] - predictions)^2)),
+ MAE = mean(abs(test_data[[target]] - predictions)),
+ R2 = cor(test_data[[target]], predictions)^2
+)
+
+# Affichage des métriques
+knitr::kable(metrics, caption = "Métriques de performance du modèle Random Forest")
+
+# Visualisation des prédictions vs réalité
+ggplot(data.frame(Actual = test_data[[target]], 
+                Predicted = predictions), 
+      aes(x = Actual, y = Predicted)) +
+ geom_point(alpha = 0.5) +
+ geom_abline(color = "red") +
+ theme_minimal() +
+ labs(title = "Prédictions vs Valeurs réelles",
+      x = "Log(nombre de décès + 1) réel",
+      y = "Log(nombre de décès + 1) prédit")
+```
+
+Le modèle Random Forest, avec un `mtry = 2`, montre des performances
+satisfaisantes (RMSE = 1.20, R² = 0.44, MAE = 0.94).
+
+L'analyse des prédictions révèle que le modèle est particulièrement
+efficace pour les catastrophes de faible intensité, mais tend à
+sous-estimer l'impact des événements extrêmes (log_deaths \> 7.5). Cette
+tendance est visible dans le graphique de dispersion qui montre une plus
+grande variabilité pour les valeurs élevées.
+
+L'importance relative des variables indique que le nombre de personnes
+affectées (log_affected) est le prédicteur dominant, suivi par la
+période et la sous-région (≈25% d'importance). Les autres variables,
+comme la durée de l'événement et le type de catastrophe, ont une
+influence plus modérée sur les prédictions.
+
+Ces résultats suggèrent que le modèle capture efficacement les tendances
+générales des impacts des catastrophes naturelles, malgré une certaine
+limitation dans la prédiction des événements exceptionnels.
+
+## 4.3 Modélisation avec XGBoost
+
+```{r xgboost_model, message=FALSE, warning=FALSE, include=FALSE}
+# Préparation des données pour XGBoost (nécessite des variables numériques)
+# Conversion des variables catégorielles en dummy variables
+dummy <- dummyVars(" ~ .", data = train_data[, features])
+x_train <- predict(dummy, train_data[, features])
+x_test <- predict(dummy, test_data[, features])
+
+# Création des matrices xgboost
+dtrain <- xgb.DMatrix(data = x_train, label = train_data[[target]])
+dtest <- xgb.DMatrix(data = x_test, label = test_data[[target]])
+
+# Paramètres de contrôle pour la validation croisée
+xgb_trcontrol <- trainControl(
+ method = "cv",
+ number = 5,
+ verboseIter = TRUE
+)
+
+# Grille de paramètres à tester
+xgb_grid <- expand.grid(
+ nrounds = c(100, 200),
+ max_depth = c(3, 6),
+ eta = c(0.01, 0.1),
+ gamma = 0,
+ colsample_bytree = 1,
+ min_child_weight = 1,
+ subsample = 1
+)
+
+# Entraînement du modèle avec validation croisée
+xgb_model <- train(
+ x = x_train,
+ y = train_data[[target]],
+ method = "xgbTree",
+ trControl = xgb_trcontrol,
+ tuneGrid = xgb_grid,
+ verbose = TRUE
+)
+```
+
+
+```{r xgboost_model print, message=FALSE, warning=FALSE, echo=FALSE}
+# Affichage des résultats
+print(xgb_model)
+```
+
+
+```{r xgboost_model affichage, message=FALSE, warning=FALSE, echo=FALSE}
+# Importance des variables
+importance_mat <- xgb.importance(
+ feature_names = colnames(x_train),
+ model = xgb_model$finalModel
+)
+xgb.plot.importance(importance_mat)
+
+# Prédictions sur l'ensemble de test
+predictions_xgb <- predict(xgb_model, newdata = x_test)
+
+# Évaluation des performances
+metrics_xgb <- data.frame(
+ RMSE = sqrt(mean((test_data[[target]] - predictions_xgb)^2)),
+ MAE = mean(abs(test_data[[target]] - predictions_xgb)),
+ R2 = cor(test_data[[target]], predictions_xgb)^2
+)
+
+# Affichage des métriques
+knitr::kable(metrics_xgb, caption = "Métriques de performance du modèle XGBoost")
+
+# Visualisation des prédictions vs réalité
+ggplot(data.frame(
+ Actual = test_data[[target]],
+ Predicted = predictions_xgb
+), aes(x = Actual, y = Predicted)) +
+ geom_point(alpha = 0.5) +
+ geom_abline(color = "red") +
+ theme_minimal() +
+ labs(title = "Prédictions vs Valeurs réelles (XGBoost)",
+      x = "Log(nombre de décès + 1) réel",
+      y = "Log(nombre de décès + 1) prédit")
+```
+
+Le modèle XGBoost, optimisé avec `nrounds = 100, max_depth = 6, eta = 0.1`, affiche des performances proches du Random Forest (RMSE = 1.21, R² = 0.42, MAE = 0.95).
+
+L'importance des variables révèle que les épidémies et la durée de
+l'événement sont les prédicteurs les plus influents, suivis par les
+séismes et les caractéristiques temporelles (période 2021-2024). Cette
+hiérarchie diffère du Random Forest, suggérant une capture différente
+des relations entre les variables.
+
+Le graphique de dispersion montre un pattern similaire au Random Forest,
+avec une bonne prédiction des événements de faible intensité mais une
+difficulté à estimer précisément les catastrophes majeures. La
+distribution plus équilibrée de l'importance des variables suggère que
+le modèle exploite plus uniformément l'information disponible.
+
+## 4.4 Modélisation linéaire
+
+```{r linear_model, message=FALSE, warning=FALSE, echo=FALSE}
+# Préparation des données pour le modèle linéaire
+# Conversion des variables catégorielles en dummy variables
+train_data_lm <- model.matrix(~ . - 1, data = train_data[, c(features, target)])
+test_data_lm <- model.matrix(~ . - 1, data = test_data[, c(features, target)])
+
+# Entraînement du modèle linéaire avec validation croisée
+lm_model <- train(
+ x = train_data_lm[, -ncol(train_data_lm)],
+ y = train_data[[target]],
+ method = "lm",
+ trControl = trainControl(
+   method = "cv",
+   number = 5
+ )
+)
+
+# Affichage des résultats
+print(lm_model)
+
+# Importance des variables (coefficients standardisés)
+coef_summary <- summary(lm_model$finalModel)
+coef_importance <- data.frame(
+ Variable = rownames(coef_summary$coefficients),
+ Coefficient = coef_summary$coefficients[,1],
+ P_value = coef_summary$coefficients[,4]
+) %>%
+ arrange(desc(abs(Coefficient)))
+
+# Affichage des coefficients les plus importants
+knitr::kable(head(coef_importance, 10), 
+            caption = "Top 10 des variables les plus influentes",
+            row.names = FALSE)
+
+# Prédictions sur l'ensemble de test
+predictions_lm <- predict(lm_model, newdata = test_data_lm[, -ncol(test_data_lm)])
+
+# Évaluation des performances
+metrics_lm <- data.frame(
+ RMSE = sqrt(mean((test_data[[target]] - predictions_lm)^2)),
+ MAE = mean(abs(test_data[[target]] - predictions_lm)),
+ R2 = cor(test_data[[target]], predictions_lm)^2
+)
+```
+
+```{r linear_model affichage, message=FALSE, warning=FALSE, echo=FALSE}
+# Affichage des métriques
+knitr::kable(metrics_lm, caption = "Métriques de performance du modèle linéaire")
+
+# Visualisation des prédictions vs réalité
+ggplot(data.frame(
+ Actual = test_data[[target]],
+ Predicted = predictions_lm
+), aes(x = Actual, y = Predicted)) +
+ geom_point(alpha = 0.5) +
+ geom_abline(color = "red") +
+ theme_minimal() +
+ labs(title = "Prédictions vs Valeurs réelles (Modèle linéaire)",
+      x = "Log(nombre de décès + 1) réel",
+      y = "Log(nombre de décès + 1) prédit")
+
+```
+
+Le modèle linéaire montre des performances inférieures aux approches
+précédentes (RMSE = 1.31, R² = 0.33, MAE = 1.01), suggérant la présence
+de relations non-linéaires importantes dans nos données.
+
+L'analyse des coefficients révèle que les mouvements de masse humides et
+les séismes ont l'impact positif le plus significatif (p-value \< 0.05)
+sur le nombre de décès. À l'inverse, certains sous-types de catastrophes
+comme les coulées de lave et les mouvements de terrain présentent des
+coefficients négatifs significatifs.
+
+Le graphique de dispersion montre une plus grande variabilité dans les
+prédictions et confirme la difficulté du modèle à capturer la complexité
+des relations, particulièrement pour les événements extrêmes.
+
+## 4.5 Modélisation avec SVR (Support Vector Regression)
+
+```{r svr_model, message=FALSE, warning=FALSE, include = FALSE}
+library(e1071)
+
+# Sélection et normalisation des variables numériques
+num_features <- c("log_affected", "event_duration")
+cat_features <- c("disaster_type", "region", "periode")
+
+# Création du dataframe pour SVR
+train_svr <- train_data[, c(num_features, cat_features)]
+test_svr <- test_data[, c(num_features, cat_features)]
+
+# Normalisation des variables numériques
+for(feat in num_features) {
+  mean_val <- mean(train_svr[[feat]], na.rm = TRUE)
+  sd_val <- sd(train_svr[[feat]], na.rm = TRUE)
+  train_svr[[feat]] <- scale(train_svr[[feat]], center = mean_val, scale = sd_val)
+  test_svr[[feat]] <- scale(test_svr[[feat]], center = mean_val, scale = sd_val)
+}
+
+# Conversion des variables catégorielles en dummy
+train_svr <- model.matrix(~ . - 1, data = train_svr)
+test_svr <- model.matrix(~ . - 1, data = test_svr)
+
+# Entraînement du modèle SVR avec paramètres simples
+svr_model <- svm(
+  x = train_svr,
+  y = train_data[[target]],
+  kernel = "radial",
+  cost = 1,
+  gamma = 1/ncol(train_svr)
+)
+
+# Prédictions
+predictions_svr <- predict(svr_model, newdata = test_svr)
+
+# Calcul des métriques
+metrics_svr <- data.frame(
+  RMSE = sqrt(mean((test_data[[target]] - predictions_svr)^2)),
+  MAE = mean(abs(test_data[[target]] - predictions_svr)),
+  R2 = cor(test_data[[target]], predictions_svr)^2
+)
+```
+
+
+```{r svr_model affichage, message=FALSE, warning=FALSE, echo=FALSE}
+# Affichage des métriques
+knitr::kable(metrics_svr, caption = "Métriques de performance du modèle SVR")
+
+# Visualisation
+ggplot(data.frame(
+  Actual = test_data[[target]],
+  Predicted = predictions_svr
+), aes(x = Actual, y = Predicted)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(color = "red") +
+  theme_minimal() +
+  labs(title = "Prédictions vs Valeurs réelles (SVR)",
+       x = "Log(nombre de décès + 1) réel",
+       y = "Log(nombre de décès + 1) prédit")
+```
+
+Le modèle SVR (Support Vector Regression) montre des performances
+comparables au modèle linéaire avec un RMSE de 1.29, un R² de 0.36 et un
+MAE de 0.97.
+
+Le graphique de dispersion révèle des patterns similaires aux autres
+modèles, avec une bonne prédiction des valeurs faibles mais une
+difficulté à prédire précisément les événements extrêmes. La
+distribution des points autour de la ligne y=x indique une tendance à la
+sous-estimation pour les catastrophes majeures.
+
+Ces résultats, inférieurs à ceux du Random Forest et du XGBoost,
+confirment que notre problème nécessite des modèles capables de capturer
+des relations non-linéaires complexes.
+
+## 4.6 Comparaison et sélection du modèle final
+
+```{r, echo=FALSE}
+# Création d'un tableau comparatif des modèles
+comparison_table <- data.frame(
+  Modèle = c("Random Forest", "XGBoost", "Régression Linéaire", "SVR"),
+  RMSE = c(1.20, 1.21, 1.31, 1.29),
+  MAE = c(0.94, 0.95, 1.01, 0.97),
+  R2 = c(0.44, 0.42, 0.33, 0.36)
+)
+
+# Affichage du tableau
+knitr::kable(comparison_table,
+             caption = "Comparaison des performances des différents modèles",
+             align = c('l', 'c', 'c', 'c'),
+             digits = 2)
+```
+
+L'analyse comparative des quatre modèles testés montre une hiérarchie
+claire dans leurs performances prédictives :
+
+1.  **Random Forest** domine avec les meilleures métriques (RMSE = 1.20,
+    MAE = 0.94, R² = 0.44), démontrant sa capacité supérieure à capturer
+    les patterns complexes des données.
+
+2.  **XGBoost** suit de près avec des performances similaires (RMSE =
+    1.21, MAE = 0.95, R² = 0.42), confirmant l'efficacité des méthodes
+    d'ensemble pour notre problématique.
+
+3.  **SVR** et la **Régression Linéaire** présentent des performances
+    moins convaincantes (R² ≈ 0.35), suggérant leurs limites face à la
+    complexité des relations dans nos données.
+
+Le Random Forest est donc retenu comme modèle final pour : - Sa
+supériorité sur toutes les métriques d'évaluation - Son équilibre entre
+performance et interprétabilité - Sa robustesse naturelle au
+surapprentissage
+
+Cette comparaison confirme la nécessité d'utiliser des modèles capables
+de capturer des relations non-linéaires complexes pour prédire
+efficacement l'impact des catastrophes naturelles.
+
+## 4.7 Analyse approfondie du modèle Random Forest
+
+### 4.7.1 Importance des variables
+
+```{r var_importance, message=FALSE, warning=FALSE, echo=FALSE}
+library(DALEX)
+
+# Création de l'explainer
+rf_explainer <- explain(
+  model = rf_model,
+  data = train_data[, features],
+  y = train_data$log_deaths,
+  label = "Random Forest"
+)
+
+# Analyse de l'importance des variables
+variable_importance <- model_parts(rf_explainer)
+plot(variable_importance) +
+  labs(title = "Importance des variables dans le modèle Random Forest",
+       x = "RMSE après permutations",
+       y = "Variables") +
+  theme_minimal()
+```
+
+L'analyse de l'importance des variables révèle une hiérarchie claire dans leur contribution au modèle : 
+
+- `log_affected` est le prédicteur dominant, confirmant le lien fort entre le nombre de personnes affectées et le nombre de décès 
+
+- `disaster_subtype`, `subregion` et `periode` montrent une influence modérée 
+
+- Les variables temporelles et géographiques ont un impact plus limité
+
+### 4.7.2 Analyse des relations avec Partial Dependency Plots
+
+```{r pdp_analysis, message=FALSE, warning=FALSE, echo=FALSE}
+# PDP pour les variables les plus importantes
+vars_to_analyze <- c("log_affected", "disaster_subtype", "subregion", "periode")
+
+for(var in vars_to_analyze) {
+  pdp <- model_profile(rf_explainer, variables = var)
+  print(plot(pdp) +
+    labs(title = paste("Relation entre", var, "et le nombre de décès"),
+         x = var,
+         y = "Prédiction moyenne") +
+    theme_minimal()) 
+}
+```
+
+Les profils de dépendance partielle révèlent des patterns intéressants : 
+
+1. **Log_affected** montre une relation non-linéaire avec : 
+
+  - Une phase stable initiale (0-5) 
+
+  - Une croissance progressive (5-15) 
+  
+  - Une accélération marquée au-delà 
+
+2. **Variables catégorielles** montrent des impacts différenciés selon les modalités
+
+### 4.7.3 Analyse détaillée des erreurs
+
+```{r error_analysis, message=FALSE, warning=FALSE, echo=FALSE}
+# Analyse des résidus par catégorie
+residuals <- model_diagnostics(rf_explainer)
+
+# Visualisation des résidus
+plot(residuals) +
+  labs(title = "Diagnostic des erreurs de prédiction",
+       x = "Valeur prédite",
+       y = "Résidus") +
+  theme_minimal()
+
+# Analyse des erreurs par type de catastrophe
+error_analysis <- data.frame(
+  actual = test_data$log_deaths,
+  predicted = predictions,
+  error = abs(test_data$log_deaths - predictions),
+  disaster_type = test_data$disaster_type
+)
+
+ggplot(error_analysis, aes(x = reorder(disaster_type, error), y = error)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(title = "Distribution des erreurs par type de catastrophe",
+       x = "Type de catastrophe",
+       y = "Erreur absolue") +
+  theme_minimal()
+```
+
+L'analyse des résidus présentée dans ces deux graphiques fournit des informations importantes sur les performances du modèle Random Forest et les défis rencontrés dans la prédiction du nombre de décès.
+
+**Diagnostic des erreurs de prédiction**
+
+Ce graphique montre la relation entre les valeurs prédites par le modèle et les résidus (différence entre les valeurs prédites et réelles). On observe plusieurs éléments intéressants :
+
+  1. La majorité des points se concentrent autour de la ligne centrale, ce qui indique que le modèle prédit bien les valeurs moyennes.
+  2. Cependant, on remarque une tendance à la sous-estimation pour les valeurs prédites élevées. Cela signifie que le modèle a des difficultés à prédire précisément les catastrophes majeures entraînant un très grand nombre de décès.
+  3. Quelques points extrêmes sont visibles en haut et en bas du graphique, suggérant la présence d'observations difficiles à prédire pour le modèle.
+
+**Distribution des erreurs par type de catastrophe**
+
+Ce graphique en boîtes à moustaches montre la distribution des erreurs absolues de prédiction pour chaque type de catastrophe. On peut en tirer les observations suivantes :
+
+  1. Certains types de catastrophes, comme les séismes et les mouvements de masse, présentent une plus grande variabilité dans les erreurs de prédiction.
+  2. D'autres types, comme les inondations et les tempêtes, semblent mieux prédits avec des erreurs plus concentrées.
+  3. La médiane des erreurs varie selon les types de catastrophes, indiquant que le modèle a plus de facilité à prédire certains événements que d'autres.
+
+Ces analyses détaillées des erreurs de prédiction permettent d'identifier les points forts et les limites du modèle Random Forest. Elles mettent en évidence la difficulté à prédire précisément les catastrophes extrêmes, ainsi que les différences de performance selon les types d'événements. Ces insights seront précieux pour améliorer le modèle et adapter les stratégies d'assurance en conséquence.
+
+### 4.7.4 Analyse quantitative des erreurs et limitations
+
+```{r error_stats, message=FALSE, warning=FALSE, echo=FALSE}
+# Création du dataframe d'analyse des erreurs complet
+error_analysis <- data.frame(
+  actual = test_data$log_deaths,
+  predicted = predictions,
+  error = abs(test_data$log_deaths - predictions),
+  disaster_type = test_data$disaster_type,
+  region = test_data$region          # Ajout de la région
+)
+
+# Statistiques descriptives des erreurs
+error_stats <- error_analysis %>%
+  summarise(
+    RMSE = sqrt(mean(error^2)),
+    MAE = mean(error),
+    Median_Error = median(error),
+    SD_Error = sd(error),
+    Q1_Error = quantile(error, 0.25),
+    Q3_Error = quantile(error, 0.75)
+  )
+
+knitr::kable(error_stats, 
+             caption = "Statistiques descriptives des erreurs de prédiction",
+             digits = 3)
+
+# Analyse des erreurs par région
+ggplot(error_analysis, aes(x = reorder(region, error), y = error)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  coord_flip() +
+  labs(title = "Distribution des erreurs par région",
+       x = "Région",
+       y = "Erreur absolue") +
+  theme_minimal()
+
+# Tableau résumé des performances par région
+regional_performance <- error_analysis %>%
+  group_by(region) %>%
+  summarise(
+    RMSE = sqrt(mean(error^2)),
+    MAE = mean(error),
+    n_obs = n()
+  ) %>%
+  arrange(desc(RMSE))
+
+knitr::kable(regional_performance, 
+             caption = "Performance du modèle par région",
+             digits = 3)
+```
+
+Voici une interprétation plus concise et pertinente des résultats présentés dans ces images, en faisant des liens avec les analyses précédentes :
+
+**Diagnostic des erreurs de prédiction**
+
+Cette visualisation des résidus confirme les observations faites précédemment sur les limites du modèle Random Forest. Bien qu'il capture bien les événements moyens, le modèle a tendance à sous-estimer les catastrophes majeures entraînant un très grand nombre de décès. Cela se traduit par une plus grande dispersion des résidus pour les valeurs prédites élevées. Cette difficulté à prédire les événements extrêmes avait déjà été mise en évidence dans l'analyse des Partial Dependency Plots.
+
+**Distribution des erreurs par type de catastrophe**
+
+Ce graphique apporte un éclairage complémentaire sur les performances du modèle. Il montre que certains types de catastrophes, comme les séismes et les mouvements de terrain, présentent une variabilité plus importante dans les erreurs de prédiction. Cette observation corrobore l'analyse précédente qui soulignait l'impact différencié des sous-types de catastrophes sur le nombre de décès prédit.
+
+**Performance du modèle par région**
+
+Le tableau des métriques de performance régionales révèle des disparités géographiques, en cohérence avec l'analyse de la relation entre le sous-région et le nombre de décès. L'Océanie, qui présentait un profil de risque plus limité, affiche effectivement les meilleures performances du modèle. À l'inverse, l'Asie, identifiée comme une zone à risque élevé, montre les erreurs les plus importantes. Ces résultats soulignent l'importance de prendre en compte les spécificités régionales dans l'utilisation opérationnelle du modèle.
+
+Dans l'ensemble, ces analyses approfondies des erreurs de prédiction permettent de mieux cerner les forces et les faiblesses du modèle Random Forest. Elles complètent utilement les insights précédemment obtenus sur l'importance des variables, les relations non-linéaires et les disparités régionales. Ces éléments seront essentiels pour affiner le modèle et adapter les stratégies d'assurance en conséquence.
+
+
+
+
+# 5. Application Actuarielle : Construction et Analyse du Score Global de Risque Assurantiel (SGRA)
+
+## 5.1 Construction des Indicateurs Synthétiques
+
+Le secteur de l'assurance doit faire face à des défis importants liés aux catastrophes naturelles. L'objectif est de construire des indicateurs synthétiques permettant d'analyser le risque humain et d'élaborer un Score Global de Risque Assurantiel (SGRA).
+
+Deux questions principales guident notre approche :
+
+Le secteur de l'assurance doit faire face à des défis importants liés aux catastrophes naturelles :
+
+-   Comment **évaluer la gravité des catastrophes** pour affiner la
+    segmentation des contrats ?
+
+-   Comment **prioriser les actions assurantielles** (tarification,
+    prévention, réassurance) selon l'exposition globale aux risques ?
+
+
+Notre analyse repose sur le taux de mortalité comme indicateur de base, calculé comme suit :
+
+Le **taux de mortalité** mesure la gravité d'un événement en rapportant
+le nombre de décès à la population totale exposée :
+
+$\text{Taux de mortalité} = \frac{\text{décès}}{\text{total exposé}} \times 100$
+
+où : **Total exposé** = décès + personnes affectées.
+
+L'objectif est de **construire des indicateurs synthétiques** permettant d'analyser le risque humain par région et d'élaborer un **Score Global de Risque Assurantiel (SGRA)**. Cet outil doit fournir une vue claire des régions prioritaires pour des actions spécifiques.
+
+## 5.2 Analyse Temporelle du Risque Catastrophique
+
+```{r, echo=FALSE, echo=FALSE}
+# 1. Calcul des indicateurs globaux avec plus de métriques
+mortality_analysis_yearly <- test_data %>%
+  group_by(region, year) %>%
+  summarise(
+    total_deaths = sum(total_deaths),
+    total_affected = sum(total_affected),
+    total_exposed = total_deaths + total_affected,
+    mortality_rate = (total_deaths / total_exposed) * 100,
+    nb_events = n(),
+    # Nouvelles métriques
+    avg_deaths_per_event = total_deaths / nb_events,
+    avg_affected_per_event = total_affected / nb_events,
+    event_severity = total_exposed / nb_events,  # Exposition moyenne par événement
+    .groups = 'drop'
+  )
+
+# 2. Tendances annuelles avec métriques enrichies
+annual_trends <- test_data %>%
+  group_by(year) %>%
+  summarise(
+    mortality_rate_avg = mean(total_deaths / (total_deaths + total_affected) * 100),
+    nb_events = n(),
+    # Ajout d'indicateurs de volatilité
+    mortality_sd = sd(total_deaths / (total_deaths + total_affected) * 100),
+    mortality_cv = mortality_sd / mortality_rate_avg * 100, # Coefficient de variation
+    .groups = 'drop'
+  )
+
+# 3. Visualisation améliorée
+ggplot(annual_trends, aes(x = year)) +
+  # Taux de mortalité avec intervalle de confiance
+  geom_line(aes(y = mortality_rate_avg, color = "Taux de mortalité (%)"), size = 1) +
+  geom_ribbon(aes(ymin = mortality_rate_avg - mortality_sd,
+                  ymax = mortality_rate_avg + mortality_sd),
+              alpha = 0.2, fill = "turquoise3") +
+  # Nombre d'événements
+  geom_line(aes(y = nb_events/2, color = "Nombre d'événements"), size = 1) +
+  # Points pour les pics significatifs
+  geom_point(data = subset(annual_trends, 
+                          mortality_rate_avg > mean(mortality_rate_avg) + 2*sd(mortality_rate_avg)),
+             aes(y = mortality_rate_avg), color = "red", size = 3) +
+  # Échelles et légendes
+  scale_y_continuous(
+    "Taux de mortalité (%)",
+    sec.axis = sec_axis(~.*2, name = "Nombre d'événements")
+  ) +
+  scale_color_manual(values = c("red", "turquoise3")) +
+  theme_minimal() +
+  labs(title = "Évolution du taux de mortalité et du nombre d'événements (1980-2024)",
+       subtitle = "Zone ombrée : ± 1 écart-type autour du taux de mortalité moyen",
+       x = "Année",
+       color = "Indicateur") +
+  # Améliorations esthétiques
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10, color = "grey40"),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+```
+
+L'analyse temporelle révèle une dynamique contrastée entre la fréquence des catastrophes et leur impact mortel.
+
+Le nombre d'événements (ligne rouge) montre une tendance croissante continue, passant de 20 événements par an dans les années 1980 à plus de 40 aujourd'hui. Cette augmentation traduit une exposition accrue aux risques catastrophiques.
+
+En revanche, le taux de mortalité (ligne turquoise) reste relativement stable, oscillant autour de 5%, malgré quelques pics notables (points rouges) dans les années 1980 et début 1990. La zone ombrée, représentant l'intervalle de confiance, suggère une variabilité décroissante au fil du temps.
+
+Ce paradoxe - multiplication des événements avec stabilisation de la mortalité - indique une amélioration significative des systèmes de prévention et de gestion des catastrophes. Cette évolution souligne l'importance d'adapter les couvertures d'assurance à une fréquence accrue d'événements, mais avec des impacts individuels potentiellement mieux maîtrisés.
+
+## 5.3 Analyse Comparative des Profils Régionaux
+
+### 5.3.1 Construction des Indicateurs Régionaux
+
+Trois indicateurs clés ont été développés pour caractériser les profils de risque :
+
+**1. Indice de Sévérité Populationnelle (ISP)**
+
+$\text{ISP} = \text{Taux moyen de mortalité} \times \log(\text{Population totale exposée}) \times \text{Fréquence moyenne}$
+
+-   **Taux moyen** : Mesure la gravité moyenne des événements
+
+-   **Population totale exposée** : Prend en compte la taille de la population exposée
+
+-   **Fréquence moyenne** : Intègre la fréquence des catastrophes
+
+**2. Score de Risque Combiné (SRC)**
+
+$\text{SRC} = \text{Taux moyen de mortalité} \times \text{Population totale exposée} \times \text{Fréquence moyenne}$
+
+-   Évalue la gravité pondérée par la population exposée
+
+**3. Indice de Résilience**
+
+$\text{Résilience} = \frac{1}{\text{Taux moyen} \times \text{Fréquence moyenne}}$
+
+-   Reflète la capacité à limiter la mortalité malgré la fréquence des événements
+
+```{r}
+# Calcul des statistiques avec standardisation
+regional_stats <- mortality_analysis_yearly %>%
+  group_by(region) %>%
+  summarise(
+    avg_mortality = mean(mortality_rate, na.rm = TRUE),
+    max_mortality = max(mortality_rate, na.rm = TRUE),
+    event_frequency = mean(nb_events, na.rm = TRUE),
+    total_exposed = sum(total_exposed),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    # Standardisation des indicateurs
+    ISP = scale(avg_mortality * log(total_exposed) * event_frequency),
+    SRC = scale(avg_mortality * total_exposed * event_frequency),
+    resilience = scale(1 / (avg_mortality * event_frequency))
+  )
+
+# Visualisation combinée
+p1 <- ggplot(regional_stats) +
+  geom_col(aes(x = reorder(region, ISP), y = ISP, fill = "ISP"), alpha = 0.8) +
+  geom_text(aes(x = region, y = ISP, 
+                label = sprintf("%.2f", ISP)), hjust = -0.2) +
+  scale_fill_manual(values = "skyblue") +
+  coord_flip() +
+  labs(title = "Indice de Sévérité Populationnelle",
+       subtitle = "Standardisé (moyenne = 0, écart-type = 1)",
+       x = "", y = "Score") +
+  theme_minimal()
+
+p2 <- ggplot(regional_stats) +
+  geom_col(aes(x = reorder(region, SRC), y = SRC, fill = "SRC"), alpha = 0.8) +
+  geom_text(aes(x = region, y = SRC,
+                label = sprintf("%.2f", SRC)), hjust = -0.2) +
+  scale_fill_manual(values = "salmon") +
+  coord_flip() +
+  labs(title = "Score de Risque Combiné",
+       subtitle = "Standardisé (moyenne = 0, écart-type = 1)",
+       x = "", y = "Score") +
+  theme_minimal()
+
+p3 <- ggplot(regional_stats) +
+  geom_col(aes(x = reorder(region, resilience), y = resilience, 
+               fill = "Résilience"), alpha = 0.8) +
+  geom_text(aes(x = region, y = resilience,
+                label = sprintf("%.2f", resilience)), hjust = -0.2) +
+  scale_fill_manual(values = "lightgreen") +
+  coord_flip() +
+  labs(title = "Score de Résilience",
+       subtitle = "Standardisé (moyenne = 0, écart-type = 1)",
+       x = "", y = "Score") +
+  theme_minimal()
+
+# Affichage des graphiques et du tableau
+p1
+p2
+p3
+```
+
+### 5.3.2 Synthèse des Profils Régionaux
+
+```{r, echo=FALSE}
+# Tableau de synthèse
+regional_summary <- regional_stats %>%
+  mutate(
+    ISP_rank = rank(-ISP),
+    SRC_rank = rank(-SRC),
+    RES_rank = rank(-resilience),
+    Risk_Level = case_when(
+      ISP > 0.5 & SRC > 0.5 ~ "Élevé",
+      ISP < -0.5 & SRC < -0.5 ~ "Faible",
+      TRUE ~ "Modéré"
+    )
+  )
+
+knitr::kable(
+  regional_summary %>%
+    select(region, ISP_rank, SRC_rank, RES_rank, Risk_Level),
+  col.names = c("Région", "Rang ISP", "Rang SRC", "Rang Résilience", "Niveau de Risque"),
+  caption = "Synthèse des indicateurs de risque par région"
+)
+```
+
+L'analyse des indicateurs standardisés met en évidence des profils de risque très contrastés selon les régions. 
+
+L'Afrique présente une vulnérabilité maximale avec l'ISP le plus élevé (+1.40), tandis que l'Asie, malgré sa population importante, affiche l'ISP le plus faible (-1.14). Cependant, l'Asie domine le classement SRC en raison de sa population exposée massive, alors que l'Europe et l'Océanie montrent des SRC plus faibles.
+
+En termes de résilience, l'Asie se distingue positivement grâce à ses infrastructures développées, contrairement à l'Afrique qui présente la plus faible capacité de résilience.
+
+Ces profils distincts appellent des stratégies assurantielles différenciées :
+
+- Couvertures renforcées pour l'Afrique
+
+- Gestion des risques de masse pour l'Asie
+
+- Approche standardisée pour l'Europe et l'Océanie
+
+Cette segmentation constitue une base essentielle pour l'adaptation des politiques de souscription et de tarification aux spécificités régionales.
+
+
+## 5.4 Élaboration du Score Global de Risque Assurantiel (SGRA)
+
+Le SGRA combine les trois indicateurs précédents selon une pondération spécifique :
+
+$\text{SGRA} = \alpha \times \text{ISP} + \beta \times \text{SRC} - \gamma \times \text{Résilience}$
+
+avec les pondérations suivantes :
+
+ - α = 0.5 : importance majeure de la sévérité populationnelle
+ - β = 0.4 : forte considération du risque combiné
+ - γ = 0.1 : impact modérateur de la résilience
+
+
+```{r, echo=FALSE}
+# 1. Calcul du SGRA avec conservation des variables normalisées
+regional_stats <- regional_stats %>%
+  mutate(
+    ISP_norm = as.numeric(scale(ISP)),  # Conversion explicite en numérique
+    SRC_norm = as.numeric(scale(SRC)),
+    resilience_norm = as.numeric(scale(resilience)),
+    
+    # Calcul du SGRA
+    SGRA = 0.5 * ISP_norm + 0.4 * SRC_norm - 0.1 * resilience_norm,
+    
+    # Contributions individuelles
+    contribution_ISP = 0.5 * ISP_norm,
+    contribution_SRC = 0.4 * SRC_norm,
+    contribution_resilience = -0.1 * resilience_norm,
+    
+    # Classification du risque
+    risk_category = case_when(
+      SGRA > 1 ~ "Très élevé",
+      SGRA > 0 ~ "Élevé",
+      SGRA > -1 ~ "Modéré",
+      TRUE ~ "Faible"
+    )
+  )
+
+# 2. Visualisation améliorée
+ggplot(regional_stats, aes(x = reorder(region, SGRA), y = SGRA)) +
+  geom_bar(aes(fill = risk_category), stat = "identity") +
+  geom_text(aes(label = sprintf("%.2f", SGRA),
+                hjust = ifelse(SGRA >= 0, -0.2, 1.2)),
+            size = 4) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_fill_manual(values = c(
+    "Très élevé" = "red",
+    "Élevé" = "orange",
+    "Modéré" = "yellow",
+    "Faible" = "green"
+  )) +
+  theme_minimal() +
+  labs(
+    title = "Score Global de Risque Assurantiel (SGRA) par Région",
+    subtitle = "Combinaison pondérée : ISP (50%), SRC (40%), Résilience (-10%)",
+    x = "Région",
+    y = "SGRA",
+    fill = "Niveau de risque"
+  ) +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 10, color = "gray50"),
+    axis.title = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  coord_flip()
+
+# 3. Tableau de synthèse
+knitr::kable(
+  regional_stats %>%
+    select(region, SGRA, risk_category, 
+           contribution_ISP, contribution_SRC, contribution_resilience) %>%
+    arrange(desc(SGRA)),
+  col.names = c("Région", "SGRA", "Niveau de risque", 
+                "Impact ISP", "Impact SRC", "Impact Résilience"),
+  digits = 2,
+  caption = "Décomposition du SGRA par composante"
+)
+```
+
+La classification qui émerge du SGRA révèle quatre niveaux distincts de risque :
+
+1. **Risque Élevé** (SGRA > 0.5)
+   - Afrique (0.71) : vulnérabilité maximale, résilience minimale
+   - Amériques (0.28) : exposition importante mais meilleure résilience
+
+2. **Risque Modéré** (-0.5 < SGRA < 0.5)
+   - Asie (-0.08) : forte population exposée compensée par une bonne résilience
+   - Europe (-0.17) : profil équilibré sur tous les critères
+
+3. **Risque Faible** (SGRA < -0.5)
+   - Océanie (-0.74) : exposition limitée et bonne résilience
+
+Cette hiérarchisation permet d'orienter les stratégies assurantielles de manière différenciée selon les régions.
+
+## 5.5 Cartographie Mondiale du Risque Assurantiel par Pays
+
+```{r, echo=FALSE}
+# 1. Création de la base par pays
+mortality_analysis_country <- test_data %>%
+  group_by(country, year) %>%
+  summarise(
+    total_deaths = sum(total_deaths),
+    total_affected = sum(total_affected),
+    total_exposed = total_deaths + total_affected,
+    mortality_rate = (total_deaths / total_exposed) * 100,
+    nb_events = n(),
+    avg_deaths_per_event = total_deaths / nb_events,
+    avg_affected_per_event = total_affected / nb_events,
+    event_severity = total_exposed / nb_events,
+    .groups = 'drop'
+  )
+
+# 2. Calcul des indicateurs de risque par pays
+country_stats <- mortality_analysis_country %>%
+  group_by(country) %>%
+  summarise(
+    avg_mortality = mean(mortality_rate, na.rm = TRUE),
+    max_mortality = max(mortality_rate, na.rm = TRUE),
+    event_frequency = mean(nb_events, na.rm = TRUE),
+    total_exposed = sum(total_exposed),
+    .groups = 'drop'
+  ) %>%
+  mutate(
+    ISP = scale(avg_mortality * log(total_exposed) * event_frequency),
+    SRC = scale(avg_mortality * total_exposed * event_frequency),
+    resilience = scale(1 / (avg_mortality * event_frequency)),
+    SGRA = 0.5 * ISP + 0.4 * SRC - 0.1 * resilience,
+    risk_category = case_when(
+      SGRA >= quantile(SGRA, 0.75, na.rm = TRUE) ~ "Élevé",
+      SGRA <= quantile(SGRA, 0.25, na.rm = TRUE) ~ "Faible",
+      TRUE ~ "Modéré"
+    )
+  )
+
+# 3. Création de la carte mondiale
+library(sf)
+library(rnaturalearth)
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Joindre les données aux pays
+world_data <- world %>%
+  left_join(country_stats, by = c("name" = "country"))
+
+# Calcul des centroids
+centroids <- st_centroid(world_data)
+centroids_coords <- do.call(rbind, st_geometry(centroids)) %>%
+  as.data.frame() %>% 
+  setNames(c("lon", "lat"))
+world_data_with_coords <- world_data %>% 
+  bind_cols(centroids_coords)
+
+# 4. Visualisation
+ggplot() +
+  # Fond de carte avec une palette plus contrastée
+  geom_sf(data = world_data, 
+          aes(fill = SGRA), 
+          color = "darkgrey",  
+          size = 0.3) +
+  # Points avec une meilleure visibilité
+  geom_point(data = world_data_with_coords,
+             aes(x = lon, y = lat, 
+                 size = total_exposed,
+                 color = risk_category),
+             alpha = 0.8) +
+  # Échelles améliorées
+  scale_fill_viridis_c(
+    name = "SGRA",
+    option = "plasma",
+    na.value = "lightgrey",
+    breaks = seq(-2, 4, by = 1)
+  ) +
+  scale_color_manual(
+    name = "Niveau de risque",
+    values = c(
+      "Élevé" = "#FF4444",
+      "Modéré" = "#FFA500",
+      "Faible" = "#4CAF50",
+      "NA" = "grey50"
+    )
+  ) +
+  scale_size_continuous(
+    name = "Population exposée",
+    range = c(3, 20),
+    breaks = c(1e7, 5e7, 1e8, 2e8),
+    labels = c("10M", "50M", "100M", "200M")
+  ) +
+  # Design amélioré
+  theme_minimal() +
+  labs(
+    title = "Carte mondiale des Scores Globaux de Risque Assurantiel (SGRA)",
+    subtitle = "Analyse par pays du risque catastrophique et de l'exposition des populations",
+    caption = "Source : Analyse basée sur les données EM-DAT 1980-2024"
+  ) +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 12, color = "darkgrey"),
+    legend.position = "right",
+    legend.box = "vertical",
+    axis.text = element_blank(),
+    panel.grid = element_blank(),
+    plot.background = element_rect(fill = "white", color = NA)
+  )
+```
+
+L'analyse cartographique révèle des disparités géographiques marquées dans la distribution du risque catastrophique :
+
+1. **Zones à Risque Critique**
+   - Asie du Sud et de l'Est : SGRA très élevé (3-4), populations exposées massives (>200M)
+   - Points chauds en Afrique : risques élevés mais populations plus réduites
+
+2. **Zones à Risque Modéré**
+   - Amérique du Nord : SGRA moyen malgré une forte population exposée
+   - Europe : profil équilibré reflétant des systèmes de gestion efficaces
+
+3. **Zones à Risque Limité**
+   - Océanie : SGRA faible malgré l'exposition aux catastrophes
+   - Zones nordiques : combinaison de faible exposition et bonne résilience
+
+Cette distribution spatiale du risque fournit une base solide pour la différenciation des stratégies assurantielles au niveau national.
+
+
+# 6. Conclusion Globale 
+
+Cette étude approfondie a permis de développer un modèle prédictif robuste, basé sur un algorithme de Random Forest, pour estimer l'impact humain des catastrophes naturelles en termes de nombre de décès. L'analyse détaillée des résultats a mis en lumière plusieurs insights clés :
+
+Tout d'abord, le nombre de personnes affectées s'est révélé être le principal facteur prédictif du nombre de décès, confirmant l'importance de cette variable dans la compréhension de l'impact des catastrophes. Certaines caractéristiques des événements, comme le sous-type de catastrophe et la région géographique, ont également montré une influence significative sur les prédictions.
+
+Cependant, le modèle a également montré des limites dans la prédiction précise des événements extrêmes entraînant un très grand nombre de victimes. Cette difficulté à estimer correctement l'impact des catastrophes majeures a été mise en évidence à travers l'analyse des résidus et de la distribution des erreurs par type d'événement.
+
+Sur le plan géographique, des disparités régionales importantes ont été identifiées, avec des performances du modèle plus faibles dans certaines zones comme l'Asie, en comparaison à des régions comme l'Océanie. Ces résultats soulignent l'importance de tenir compte des spécificités locales dans la gestion des risques liés aux catastrophes naturelles.
+
+In fine, cette étude fournit une base solide pour aider le secteur de l'assurance à relever les défis posés par les catastrophes naturelles. Le modèle développé, ses forces et ses limites, constituent une source d'informations précieuse pour affiner les stratégies de tarification, de prévention et de réassurance. De plus, la construction d'indicateurs de risque synthétiques, tels que le Score Global de Risque Assurantiel (SGRA), offre un outil d'aide à la décision permettant de prioriser les actions à mener selon les profils de risque régionaux.
+
+En conclusion, ce projet d'analyse des catastrophes naturelles a permis de générer des insights approfondis, à la fois sur le plan prédictif et opérationnel, afin de mieux appréhender et gérer les enjeux liés à ces événements pour le secteur de l'assurance. Les résultats obtenus constituent une base solide pour poursuivre les travaux d'amélioration du modèle et d'adaptation des pratiques assurantielles.

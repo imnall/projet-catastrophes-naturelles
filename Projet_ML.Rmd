@@ -3,8 +3,8 @@ title: "Projet Machine Learning"
 author: "Fatima HADDAG, Cylia OUABA, Yikun WANG, Imane ALLAOUI"
 date: "`r Sys.Date()`"
 output:
-  html_document: default
   pdf_document: default
+  html_document: default
 editor_options: 
   markdown: 
     wrap: 72
@@ -1719,8 +1719,6 @@ Ce graphique apporte un éclairage complémentaire sur les performances du modè
 Le tableau des métriques de performance régionales révèle des disparités géographiques, en cohérence avec l'analyse de la relation entre le sous-région et le nombre de décès. L'Océanie, qui présentait un profil de risque plus limité, affiche effectivement les meilleures performances du modèle. À l'inverse, l'Asie, identifiée comme une zone à risque élevé, montre les erreurs les plus importantes. Ces résultats soulignent l'importance de prendre en compte les spécificités régionales dans l'utilisation opérationnelle du modèle.
 
 Dans l'ensemble, ces analyses approfondies des erreurs de prédiction permettent de mieux cerner les forces et les faiblesses du modèle Random Forest. Elles complètent utilement les insights précédemment obtenus sur l'importance des variables, les relations non-linéaires et les disparités régionales. Ces éléments seront essentiels pour affiner le modèle et adapter les stratégies d'assurance en conséquence.
-
-
 
 
 # 5. Application Actuarielle : Construction et Analyse du Score Global de Risque Assurantiel (SGRA)
